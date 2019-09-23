@@ -13,6 +13,8 @@
 SHT1x sht1x(dataPin, clockPin);
 
 #define CO2_sensor_pin 34
+#define PWM_MAX 255
+#define PWM_MIN 0
 
 
 WiFiServer TelnetServer(23);  // Optional in case you want to use telnet as Monitor
@@ -41,7 +43,13 @@ uint8_t LED_PIN_R = 5;
 uint8_t LED_PIN_G = 17;
 uint8_t LED_PIN_B = 16;
 uint8_t LED_PIN_W = 18;
-int freq = 12000;
+/*int LED_PIN = 5;
+int LED_PIN_R = 32;
+int LED_PIN_G = 33;
+int LED_PIN_B = 12;
+int LED_PIN_W = 13;*/
+
+int freq = 1000;
 //int ledChannel = 0;
 int ledChannel_r = 1;
 int ledChannel_g = 2;
@@ -52,6 +60,9 @@ int resolution = 8;
 int flag = 0;
 uint8_t temp_farenheit;
 float temp_celsius;
+
+//Actual and desired LED brightness values
+static int led_r_sp=0, led_r_pv=0, led_g_sp=0, led_g_pv=0, led_b_sp=0, led_b_pv=0, led_w_sp=0, led_w_pv=0;
 
 //sht10 data
 float sht10_temp=0;
@@ -96,10 +107,7 @@ void setup() {
    client.setServer(config.mqtt_server.c_str(), atoi(config.mqtt_port.c_str()));
    client.setCallback(callback);
 
-   //ledcWrite(ledChannel_b, 10);
-   //ledcWrite(ledChannel_g, 20);
-   //ledcWrite(ledChannel_r, 30);
-   ledcWrite(ledChannel_w, 30);
+   led_w_pv=30;
 
    
    //OTA stuff
@@ -231,48 +239,37 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if((str_topic.endsWith(config.mqtt_prefix+"_led_r"))||(str_topic.endsWith(config.mqtt_prefix+"_led_g"))||(str_topic.endsWith((config.mqtt_prefix+"_led_b")))||(str_topic.endsWith(config.mqtt_prefix+"_led_w")))
   {
     
-    /*for(i=0; i<length; i++)
-    {
-      //c="\0";
-      c[0]=(char)payload[i];
-       Serial.println(c[0]);
-       Serial.println(atoi(c));
-       Serial.println(i);
-      brightness=brightness+atoi(c)*pow(10,(length-(i+1)));
-    }*/
     brightness = atoi(str_payload.c_str());
     Serial.println("Brightness: ");
     Serial.println(brightness);
 
-    //if(strcmp (topic,"ESP32_led_r") == 0)
     if(str_topic.endsWith("led_r"))
     {
       Serial.println("Channel: R");
-      ledcWrite(ledChannel_r, brightness);
+      led_r_sp=brightness;
     }
-    //if(strcmp (topic,"ESP32_led_g") == 0)
+
     if(str_topic.endsWith("led_g"))
     {
       Serial.println("Channel: G");
-      ledcWrite(ledChannel_g, brightness);
+      led_g_sp=brightness;
     }
-    //if(strcmp (topic,"ESP32_led_b") == 0)
+
     if(str_topic.endsWith("led_b"))
     {
       Serial.println("Channel: B");
-      ledcWrite(ledChannel_b, brightness);
+      led_b_sp=brightness;
     }
-    //if(strcmp (topic,"ESP32_led_w") == 0)
+    
     if(str_topic.endsWith("led_w"))
     {
       Serial.println("Channel: W");
-      ledcWrite(ledChannel_w, brightness);
+      led_w_sp=brightness;
     }
   }
 
   for (i = 0; i < length; i++) {
     payload[i]=0;
-    //str_brightness[i]=(
   }
 }
 
@@ -280,13 +277,8 @@ void sht10_loop(void * parameter)
 {
   while(1)
   {
-    //portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-    //portENTER_CRITICAL(&mux);
     sht10_temp = sht1x.readTemperatureC();
     sht10_hum = sht1x.readHumidity();
-    //portEXIT_CRITICAL(&mux);
-    
-    
     delay(5000);
   }
 }
@@ -364,8 +356,24 @@ void process_co2_sensor()
     Serial.println(ret);
 }
 
+void publish_brightness_data(String channel, int brightness)
+{
+  String s;
+  String payload;
+  char payload_chars[10];
+  int payload_len=0;
+
+  
+  s = config.mqtt_prefix+channel;
+  payload=String(brightness);
+  payload.toCharArray(payload_chars,10);
+  payload_len=payload.length();
+    
+  client.publish(s.c_str(),payload_chars,payload_len);
+}
+
 void loop() {
-  static int last_millis;
+  static int last_millis,last_millis_timer2;
   //if(!ota_active)
   //{
     if(Esp.WIFI_connected)
@@ -376,7 +384,7 @@ void loop() {
         client.loop();
     }
     
-  
+    //Every 60 sec.
     if(millis()-last_millis>60000)
     {
       temp_farenheit = temprature_sens_read();
@@ -385,6 +393,73 @@ void loop() {
       process_sht10();
       process_co2_sensor();
       last_millis=millis();
+
+      //Publish data about actual LED brightness
+      publish_brightness_data("_led_r_pv",led_r_pv);
+      publish_brightness_data("_led_g_pv",led_g_pv);
+      publish_brightness_data("_led_b_pv",led_b_pv);
+      publish_brightness_data("_led_w_pv",led_w_pv);
+    }
+
+    //every 0.25 sec
+    if(millis()-last_millis_timer2>250)
+    {
+      last_millis_timer2=millis();
+      //Slowly equalize SPs and PVs
+      if(led_r_sp!=led_r_pv)
+      {
+        if((led_r_sp>led_r_pv)&&(led_r_pv<PWM_MAX))
+        {
+          led_r_pv++;
+          ledcWrite(ledChannel_r, led_r_pv);
+        }
+        if((led_r_sp<led_r_pv)&&(led_r_pv>PWM_MIN))
+        {
+          led_r_pv--;
+          ledcWrite(ledChannel_r, led_r_pv);
+        }
+      }
+
+      if(led_g_sp!=led_g_pv)
+      {
+        if((led_g_sp>led_g_pv)&&(led_g_pv<PWM_MAX))
+        {
+          led_g_pv++;
+          ledcWrite(ledChannel_g, led_g_pv);
+        }
+        if((led_g_sp<led_g_pv)&&(led_g_pv>PWM_MIN))
+        {
+          led_g_pv--;
+          ledcWrite(ledChannel_g, led_g_pv);
+        }
+      }
+
+      if(led_b_sp!=led_b_pv)
+      {
+        if((led_b_sp>led_b_pv)&&(led_b_pv<PWM_MAX))
+        {
+          led_b_pv++;
+          ledcWrite(ledChannel_b, led_b_pv);
+        }
+        if((led_b_sp<led_b_pv)&&(led_b_pv>PWM_MIN))
+        {
+          led_b_pv--;
+          ledcWrite(ledChannel_b, led_b_pv);
+        }
+      }
+      if(led_w_sp!=led_w_pv)
+      {
+        if((led_w_sp>led_w_pv)&&(led_w_pv<PWM_MAX))
+        {
+          led_w_pv++;
+          ledcWrite(ledChannel_w, led_w_pv);
+        }
+        if((led_w_sp<led_w_pv)&&(led_w_pv>PWM_MIN))
+        {
+          led_w_pv--;
+          ledcWrite(ledChannel_w, led_w_pv);
+        }
+      }
     }
     
     

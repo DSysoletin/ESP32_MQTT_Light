@@ -38,16 +38,16 @@ uint8_t temprature_sens_read();
 #endif
 
 //int LED_BUILTIN = 2;
-int LED_PIN = 22;
+/*int LED_PIN = 22;
 uint8_t LED_PIN_R = 5;
 uint8_t LED_PIN_G = 17;
 uint8_t LED_PIN_B = 16;
-uint8_t LED_PIN_W = 18;
-/*int LED_PIN = 5;
+uint8_t LED_PIN_W = 18;*/
+int LED_PIN = 5;
 int LED_PIN_R = 32;
 int LED_PIN_G = 33;
 int LED_PIN_B = 12;
-int LED_PIN_W = 13;*/
+int LED_PIN_W = 13;
 
 int freq = 1000;
 //int ledChannel = 0;
@@ -362,12 +362,15 @@ void publish_brightness_data(String channel, int brightness)
   String payload;
   char payload_chars[10];
   int payload_len=0;
-
-  
-  s = config.mqtt_prefix+channel;
+ 
+  s = "ESP32_"+config.mqtt_prefix+channel;
   payload=String(brightness);
   payload.toCharArray(payload_chars,10);
   payload_len=payload.length();
+    Serial.println("topic: ");
+    Serial.println(s);
+    Serial.println(brightness);
+    Serial.println("");
     
   client.publish(s.c_str(),payload_chars,payload_len);
 }
